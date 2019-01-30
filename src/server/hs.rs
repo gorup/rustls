@@ -1293,7 +1293,8 @@ impl State for ExpectTLS12Certificate {
 
         trace!("certs {:?}", cert_chain);
 
-        sess.config.verifier.verify_client_cert(cert_chain)
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+        sess.config.verifier.verify_client_cert_for_server_name(cert_chain, sni_ref)
             .or_else(|err| {
                      incompatible(sess, "certificate invalid");
                      Err(err)
@@ -1356,7 +1357,8 @@ impl State for ExpectTLS13Certificate {
             return Err(TLSError::NoCertificatesPresented);
         }
 
-        sess.config.get_verifier().verify_client_cert(&cert_chain)
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+        sess.config.verifier.verify_client_cert_for_server_name(&cert_chain, sni_ref)
             .or_else(|err| {
                      incompatible(sess, "certificate invalid");
                      Err(err)

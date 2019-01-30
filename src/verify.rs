@@ -9,6 +9,7 @@ use crate::msgs::handshake::DigitallySignedStruct;
 use crate::msgs::handshake::SCTList;
 use crate::msgs::enums::SignatureScheme;
 use crate::error::TLSError;
+use crate::server::ResolvesClientRoot;
 use crate::anchors::{DistinguishedNames, RootCertStore};
 #[cfg(feature = "logging")]
 use crate::log::{warn, debug};
@@ -88,6 +89,16 @@ pub trait ClientCertVerifier : Send + Sync {
     /// Does no further checking of the certificate.
     fn verify_client_cert(&self,
                           presented_certs: &[Certificate]) -> Result<ClientCertVerified, TLSError>;
+
+    /// TODO
+    fn client_auth_root_subjects_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<DistinguishedNames> {
+        Some(self.client_auth_root_subjects())
+    }
+
+    /// TODO
+    fn verify_client_cert_for_server_name(&self, presented_certs: &[Certificate], server_name: Option<webpki::DNSNameRef>) -> Result<ClientCertVerified, TLSError> {
+        self.verify_client_cert(presented_certs)
+    }
 }
 
 pub struct WebPKIVerifier {
@@ -183,6 +194,54 @@ impl ClientCertVerifier for AllowAnyAuthenticatedClient {
     fn verify_client_cert(&self, presented_certs: &[Certificate])
                           -> Result<ClientCertVerified, TLSError> {
         let (cert, chain, trustroots) = prepare(&self.roots, presented_certs)?;
+        let now = try_now()?;
+        cert.verify_is_valid_tls_client_cert(
+                SUPPORTED_SIG_ALGS, &webpki::TLSClientTrustAnchors(&trustroots),
+                &chain, now)
+            .map_err(TLSError::WebPKIError)
+            .map(|_| ClientCertVerified::assertion())
+    }
+}
+
+/// A `ClientCertVerifier` that will ensure that every client provides a trusted
+/// certificate, without any name checking.
+pub struct AllowAuthenticatedClientForSNIResolvedRootCert {
+    root_resolver: Arc<dyn ResolvesClientRoot>,
+}
+
+impl AllowAuthenticatedClientForSNIResolvedRootCert {
+    /// Construct a new `AllowAuthenticatedClientForSNIResolvedRootCert`.
+    ///
+    /// `roots` is the list of trust anchors to use for certificate validation.
+    pub fn new(root_resolver: Arc<dyn ResolvesClientRoot>) -> Arc<ClientCertVerifier> {
+        Arc::new(AllowAuthenticatedClientForSNIResolvedRootCert { root_resolver })
+    }
+}
+
+impl ClientCertVerifier for AllowAuthenticatedClientForSNIResolvedRootCert {
+    fn offer_client_auth(&self) -> bool { true }
+
+    fn client_auth_mandatory(&self) -> bool { true }
+
+    fn client_auth_root_subjects(&self) -> DistinguishedNames {
+        unreachable!()
+    }
+
+    fn client_auth_root_subjects_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<DistinguishedNames> {
+        self.root_resolver.resolve(server_name).map(|root| root.get_subjects())
+    }
+
+    fn verify_client_cert(&self, presented_certs: &[Certificate]) -> Result<ClientCertVerified, TLSError> {
+        unreachable!()
+    }
+
+    fn verify_client_cert_for_server_name(&self, presented_certs: &[Certificate], server_name: Option<webpki::DNSNameRef>) -> Result<ClientCertVerified, TLSError> {
+        // TODO: No SNI, send an error instead of this unwrap haha
+        let root = self.root_resolver.resolve(server_name).ok_or_else(|| {
+            TLSError::WebPKIError(webpki::Error::UnknownIssuer)
+        })?;
+
+        let (cert, chain, trustroots) = prepare(&root, presented_certs)?;
         let now = try_now()?;
         cert.verify_is_valid_tls_client_cert(
                 SUPPORTED_SIG_ALGS, &webpki::TLSClientTrustAnchors(&trustroots),
