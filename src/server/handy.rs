@@ -188,6 +188,7 @@ impl server::ResolvesServerCert for ResolvesServerCertUsingSNI {
     }
 }
 
+/// TODO
 pub struct ResolvesClientRootUsingSNI {
     by_name: collections::HashMap<String, RootCertStore>,
 }
