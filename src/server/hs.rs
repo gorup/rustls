@@ -498,9 +498,9 @@ impl ExpectClientHello {
         Ok(())
     }
 
-    fn emit_certificate_req_tls13(&mut self, sess: &mut ServerSessionImpl) -> bool {
+    fn emit_certificate_req_tls13(&mut self, sess: &mut ServerSessionImpl) -> Result<bool, TLSError> {
         if !sess.config.verifier.offer_client_auth() {
-            return false;
+            return Ok(false);
         }
 
         let mut cr = CertificateRequestPayloadTLS13 {
@@ -511,7 +511,12 @@ impl ExpectClientHello {
         let schemes = verify::supported_verify_schemes();
         cr.extensions.push(CertReqExtension::SignatureAlgorithms(schemes.to_vec()));
 
-        let names = sess.config.verifier.client_auth_root_subjects();
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+        let names = sess.config.verifier.client_auth_root_subjects_for_server_name(sni_ref).ok_or_else(|| {
+                sess.common.send_fatal_alert(AlertDescription::AccessDenied);
+                TLSError::General("no client certificate chain resolved".to_string())
+        })?;
+
         if !names.is_empty() {
             cr.extensions.push(CertReqExtension::AuthorityNames(names));
         }
@@ -528,7 +533,7 @@ impl ExpectClientHello {
         trace!("Sending CertificateRequest {:?}", m);
         sess.common.hs_transcript.add_message(&m);
         sess.common.send_msg(m, true);
-        true
+        Ok(true)
     }
 
     fn emit_certificate_tls13(&mut self,
@@ -785,14 +790,20 @@ impl ExpectClientHello {
         Ok(kx)
     }
 
-    fn emit_certificate_req(&mut self, sess: &mut ServerSessionImpl) -> bool {
+    // Returns whether or not we are doing client auth, while also
+    // emitting the certificate request into the session (if we are doing client auth)
+    fn emit_certificate_req(&mut self, sess: &mut ServerSessionImpl) -> Result<bool, TLSError> {
         let client_auth = &sess.config.verifier;
 
         if !client_auth.offer_client_auth() {
-            return false;
+            return Ok(false);
         }
 
-        let names = client_auth.client_auth_root_subjects();
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+        let names = client_auth.client_auth_root_subjects_for_server_name(sni_ref).ok_or_else(|| {
+                sess.common.send_fatal_alert(AlertDescription::AccessDenied);
+                TLSError::General("no client certificate chain resolved".to_string())
+        })?;
 
         let cr = CertificateRequestPayload {
             certtypes: vec![ ClientCertificateType::RSASign,
@@ -813,7 +824,7 @@ impl ExpectClientHello {
         trace!("Sending CertificateRequest {:?}", m);
         sess.common.hs_transcript.add_message(&m);
         sess.common.send_msg(m, false);
-        true
+        Ok(true)
     }
 
     fn emit_server_hello_done(&mut self, sess: &mut ServerSessionImpl) {
@@ -999,7 +1010,7 @@ impl ExpectClientHello {
         self.emit_encrypted_extensions(sess, &mut server_key, client_hello, resumedata.as_ref())?;
 
         let doing_client_auth = if full_handshake {
-            let client_auth = self.emit_certificate_req_tls13(sess);
+            let client_auth = self.emit_certificate_req_tls13(sess)?;
             self.emit_certificate_tls13(sess, &mut server_key);
             self.emit_certificate_verify_tls13(sess, &mut server_key, &sigschemes_ext)?;
             client_auth
@@ -1246,7 +1257,7 @@ impl State for ExpectClientHello {
         self.emit_certificate(sess, &mut certkey);
         self.emit_cert_status(sess, &mut certkey);
         let kx = self.emit_server_kx(sess, sigschemes, &group, &mut certkey)?;
-        let doing_client_auth = self.emit_certificate_req(sess);
+        let doing_client_auth = self.emit_certificate_req(sess)?;
         self.emit_server_hello_done(sess);
 
         if doing_client_auth {
