@@ -77,23 +77,32 @@ pub trait ClientCertVerifier : Send + Sync {
     /// `false` to skip requesting a client certificate. Defaults to `true`.
     fn offer_client_auth(&self) -> bool { true }
 
+    fn offer_client_auth_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<bool> {
+        Some(self.offer_client_auth())
+    }
+
     /// Returns `true` to require a client certificate and `false` to make client
     /// authentication optional. Defaults to `self.offer_client_auth()`.
     fn client_auth_mandatory(&self) -> bool { self.offer_client_auth() }
+
+        /// TODO
+    fn client_auth_mandatory_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<bool> {
+        Some(self.client_auth_mandatory())
+    }
 
     /// Returns the subject names of the client authentication trust anchors to
     /// share with the client when requesting client authentication.
     fn client_auth_root_subjects(&self) -> DistinguishedNames;
 
-    /// Verify a certificate chain `presented_certs` is rooted in `roots`.
-    /// Does no further checking of the certificate.
-    fn verify_client_cert(&self,
-                          presented_certs: &[Certificate]) -> Result<ClientCertVerified, TLSError>;
-
     /// TODO
     fn client_auth_root_subjects_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<DistinguishedNames> {
         Some(self.client_auth_root_subjects())
     }
+
+    /// Verify a certificate chain `presented_certs` is rooted in `roots`.
+    /// Does no further checking of the certificate.
+    fn verify_client_cert(&self,
+                          presented_certs: &[Certificate]) -> Result<ClientCertVerified, TLSError>;
 
     /// TODO
     fn verify_client_cert_for_server_name(&self, presented_certs: &[Certificate], server_name: Option<webpki::DNSNameRef>) -> Result<ClientCertVerified, TLSError> {
@@ -219,24 +228,37 @@ impl AllowAuthenticatedClientForSNIResolvedRootCert {
 }
 
 impl ClientCertVerifier for AllowAuthenticatedClientForSNIResolvedRootCert {
-    fn offer_client_auth(&self) -> bool { true }
+    fn offer_client_auth(&self) -> bool { 
+        true
+    }
 
-    fn client_auth_mandatory(&self) -> bool { true }
+    fn offer_client_auth_for_server_name(&self, _server_name: Option<webpki::DNSNameRef>) -> Option<bool> {
+        Some(true)
+    }
+
+    fn client_auth_mandatory(&self) -> bool { 
+        unreachable!()
+    }
+
+    fn client_auth_mandatory_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<bool> {
+        // if we did not resolve, then none, 
+        self.root_resolver.require_client_auth(server_name)
+    }
 
     fn client_auth_root_subjects(&self) -> DistinguishedNames {
         unreachable!()
     }
 
     fn client_auth_root_subjects_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<DistinguishedNames> {
+        // TODO: Not unwrap, figure this out, just making it build
         self.root_resolver.resolve(server_name).map(|root| root.get_subjects())
     }
 
-    fn verify_client_cert(&self, presented_certs: &[Certificate]) -> Result<ClientCertVerified, TLSError> {
+    fn verify_client_cert(&self, _presented_certs: &[Certificate]) -> Result<ClientCertVerified, TLSError> {
         unreachable!()
     }
 
     fn verify_client_cert_for_server_name(&self, presented_certs: &[Certificate], server_name: Option<webpki::DNSNameRef>) -> Result<ClientCertVerified, TLSError> {
-        // TODO: No SNI, send an error instead of this unwrap haha
         let root = self.root_resolver.resolve(server_name).ok_or_else(|| {
             TLSError::WebPKIError(webpki::Error::UnknownIssuer)
         })?;

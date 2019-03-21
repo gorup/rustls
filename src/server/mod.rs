@@ -107,6 +107,9 @@ pub trait ResolvesServerCert : Send + Sync {
 /// TODO
 pub trait ResolvesClientRoot : Send + Sync {
     /// TODO
+    fn require_client_auth(&self, server_name: Option<webpki::DNSNameRef>) -> Option<bool>;
+
+    /// TODO
     fn resolve(&self, server_name: Option<webpki::DNSNameRef>) -> Option<RootCertStore>;
 }
 

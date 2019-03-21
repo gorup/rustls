@@ -499,8 +499,14 @@ impl ExpectClientHello {
     }
 
     fn emit_certificate_req_tls13(&mut self, sess: &mut ServerSessionImpl) -> Result<bool, TLSError> {
-        if !sess.config.verifier.offer_client_auth() {
-            return Ok(false);
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+        match sess.config.verifier.offer_client_auth_for_server_name(sni_ref.clone()) {
+            Some(true) => {},
+            Some(false) => return Ok(false),
+            None => {
+                sess.common.send_fatal_alert(AlertDescription::AccessDenied);
+                return Err(TLSError::General("no client certificate chain resolved".to_string()))
+            }
         }
 
         let mut cr = CertificateRequestPayloadTLS13 {
@@ -511,7 +517,6 @@ impl ExpectClientHello {
         let schemes = verify::supported_verify_schemes();
         cr.extensions.push(CertReqExtension::SignatureAlgorithms(schemes.to_vec()));
 
-        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
         let names = sess.config.verifier.client_auth_root_subjects_for_server_name(sni_ref).ok_or_else(|| {
                 sess.common.send_fatal_alert(AlertDescription::AccessDenied);
                 TLSError::General("no client certificate chain resolved".to_string())
@@ -795,8 +800,14 @@ impl ExpectClientHello {
     fn emit_certificate_req(&mut self, sess: &mut ServerSessionImpl) -> Result<bool, TLSError> {
         let client_auth = &sess.config.verifier;
 
-        if !client_auth.offer_client_auth() {
-            return Ok(false);
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+        match sess.config.verifier.offer_client_auth_for_server_name(sni_ref.clone()) {
+            Some(true) => {},
+            Some(false) => return Ok(false),
+            None => {
+                sess.common.send_fatal_alert(AlertDescription::AccessDenied);
+                return Err(TLSError::General("no client certificate chain resolved".to_string()))
+            }
         }
 
         let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
@@ -1295,8 +1306,18 @@ impl State for ExpectTLS12Certificate {
         let cert_chain = extract_handshake!(m, HandshakePayload::Certificate).unwrap();
         sess.common.hs_transcript.add_message(&m);
 
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+
+        let client_auth_mandatory = match sess.config.verifier.client_auth_mandatory_for_server_name(sni_ref.clone()) {
+                Some(b) => b,
+                None => {
+                    sess.common.send_fatal_alert(AlertDescription::AccessDenied);
+                    return Err(TLSError::General("no client certificate chain resolved".to_string()))
+                }
+            };
+
         if cert_chain.is_empty() &&
-           !sess.config.verifier.client_auth_mandatory() {
+           !client_auth_mandatory {
             debug!("client auth requested but no certificate supplied");
             sess.common.hs_transcript.abandon_client_auth();
             return Ok(self.into_expect_tls12_client_kx(None));
@@ -1304,7 +1325,6 @@ impl State for ExpectTLS12Certificate {
 
         trace!("certs {:?}", cert_chain);
 
-        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
         sess.config.verifier.verify_client_cert_for_server_name(cert_chain, sni_ref)
             .or_else(|err| {
                      incompatible(sess, "certificate invalid");
@@ -1355,10 +1375,20 @@ impl State for ExpectTLS13Certificate {
                                                      .to_string()));
         }
 
+        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
+
+        let client_auth_mandatory = match sess.config.verifier.client_auth_mandatory_for_server_name(sni_ref.clone()) {
+                Some(b) => b,
+                None => {
+                    sess.common.send_fatal_alert(AlertDescription::AccessDenied);
+                    return Err(TLSError::General("no client certificate chain resolved".to_string()))
+                }
+            };
+
         let cert_chain = certp.convert();
 
         if cert_chain.is_empty() {
-            if !sess.config.verifier.client_auth_mandatory() {
+            if !client_auth_mandatory {
                 debug!("client auth requested but no certificate supplied");
                 sess.common.hs_transcript.abandon_client_auth();
                 return Ok(self.into_expect_tls13_finished());
@@ -1368,7 +1398,6 @@ impl State for ExpectTLS13Certificate {
             return Err(TLSError::NoCertificatesPresented);
         }
 
-        let sni_ref = sess.sni.as_ref().map(|dns_name| dns_name.as_ref());
         sess.config.verifier.verify_client_cert_for_server_name(&cert_chain, sni_ref)
             .or_else(|err| {
                      incompatible(sess, "certificate invalid");

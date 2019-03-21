@@ -190,7 +190,7 @@ impl server::ResolvesServerCert for ResolvesServerCertUsingSNI {
 
 /// TODO
 pub struct ResolvesClientRootUsingSNI {
-    by_name: collections::HashMap<String, RootCertStore>,
+    by_name: collections::HashMap<String, Option<RootCertStore>>,
 }
 
 impl ResolvesClientRootUsingSNI {
@@ -204,7 +204,7 @@ impl ResolvesClientRootUsingSNI {
     /// This function fails if `name` is not a valid DNS name, or if
     /// it's not valid for the supplied certificate, or if the certificate
     /// chain is syntactically faulty.
-    pub fn add(&mut self, name: &str, root_cert_store: RootCertStore) -> Result<(), TLSError> {
+    pub fn add(&mut self, name: &str, root_cert_store: Option<RootCertStore>) -> Result<(), TLSError> {
         let checked_name = webpki::DNSNameRef::try_from_ascii_str(name)
             .map_err(|_| TLSError::General("Bad DNS name".into()))?;
 
@@ -215,10 +215,27 @@ impl ResolvesClientRootUsingSNI {
 }
 
 impl server::ResolvesClientRoot for ResolvesClientRootUsingSNI {
+    fn require_client_auth(&self, server_name: Option<webpki::DNSNameRef>) -> Option<bool> {
+        if let Some(name) = server_name {
+            match self.by_name.get(name.into()) {
+                Some(Some(_root_cert_store)) => Some(true),
+                Some(None) => Some(false),
+                None => None
+            }
+        } else {
+            // This kind of resolver requires SNI
+            None
+        }
+
+    }
+
     fn resolve(&self, server_name: Option<webpki::DNSNameRef>) -> Option<RootCertStore> {
         if let Some(name) = server_name {
-            self.by_name.get(name.into())
-                .cloned()
+            match self.by_name.get(name.into()) {
+                Some(Some(ref root_cert_store)) => Some(root_cert_store.clone()),
+                Some(None) => None,
+                None => None
+            }
         } else {
             // This kind of resolver requires SNI
             None
