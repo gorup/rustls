@@ -232,8 +232,8 @@ impl ClientCertVerifier for AllowAuthenticatedClientForSNIResolvedRootCert {
         true
     }
 
-    fn offer_client_auth_for_server_name(&self, _server_name: Option<webpki::DNSNameRef>) -> Option<bool> {
-        Some(true)
+    fn offer_client_auth_for_server_name(&self, server_name: Option<webpki::DNSNameRef>) -> Option<bool> {
+        self.root_resolver.require_client_auth(server_name)
     }
 
     fn client_auth_mandatory(&self) -> bool { 
