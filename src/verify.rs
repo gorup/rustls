@@ -269,6 +269,10 @@ impl ClientCertVerifier for AllowAuthenticatedClientForSNIResolvedRootCert {
                 SUPPORTED_SIG_ALGS, &webpki::TLSClientTrustAnchors(&trustroots),
                 &chain, now)
             .map_err(TLSError::WebPKIError)
+            .map(|_| ClientCertVerified::assertion())?;
+            
+        cert.verify_is_valid_for_dns_name(server_name.unwrap())
+            .map_err(TLSError::WebPKIError)
             .map(|_| ClientCertVerified::assertion())
     }
 }
