@@ -80,6 +80,7 @@ pub trait ClientCertVerifier : Send + Sync {
     /// Returns `true` to require a client certificate and `false` to make client
     /// authentication optional. Defaults to `self.offer_client_auth()`.
     fn client_auth_mandatory(&self) -> bool { self.offer_client_auth() }
+    /// Returns `true` to require a client certificate and `false` to make client
     fn client_auth_mandatory_sni(&self, sni: Option<&webpki::DNSName>) -> Option<bool> { Some(self.client_auth_mandatory()) }
 
     /// Returns the subject names of the client authentication trust anchors to
@@ -87,6 +88,7 @@ pub trait ClientCertVerifier : Send + Sync {
     fn client_auth_root_subjects(&self) -> DistinguishedNames {
         unreachable!()
     }
+    /// Returns `true` to require a client certificate and `false` to make client
     fn client_auth_root_subjects_sni(&self, sni: Option<&webpki::DNSName>) -> Option<DistinguishedNames> {
         Some(self.client_auth_root_subjects())
     }
@@ -97,6 +99,7 @@ pub trait ClientCertVerifier : Send + Sync {
                           presented_certs: &[Certificate]) -> Result<ClientCertVerified, TLSError> {
                               unreachable!()
                           }
+    /// Returns `true` to require a client certificate and `false` to make client
     fn verify_client_cert_sni(&self,
                           presented_certs: &[Certificate], sni: Option<&webpki::DNSName>) -> Result<ClientCertVerified, TLSError> {
                               self.verify_client_cert(presented_certs)
